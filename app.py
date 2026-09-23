@@ -4,8 +4,8 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات بنسخة نظيفة v4 لتلافي أي أخطاء ترسبات سابقة
-conn = sqlite3.connect("chat_v4.db", check_same_thread=False)
+# تهيئة قاعدة البيانات بنسخة نظيفة v5
+conn = sqlite3.connect("chat_v5.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -72,7 +72,7 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res or "😀"
+        st.session_state["avatar"] = res[0] or "😀"
         st.session_state["bio"] = res or "مرحباً!"
         st.session_state["status"] = res or "online"
         st.rerun()
@@ -195,7 +195,7 @@ else:
             (peer, cur_user),
         )
         unread_row = c.fetchone()
-        unread_cnt = unread_row if unread_row else 0
+        unread_cnt = unread_row[0] if unread_row else 0
 
         dot = (
             "🟢"
@@ -238,7 +238,7 @@ else:
     filtered_users = [
         u
         for u in all_users
-        if search_query.lower() in u.lower() or not search_query
+        if search_query.lower() in u[0].lower() or not search_query
     ]
 
     for friend_name, friend_avatar, friend_status in filtered_users:
