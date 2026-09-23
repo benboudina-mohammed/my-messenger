@@ -4,7 +4,7 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات بنسخة نظيفة v3 لتجنب التعارضات القديمة
+# تهيئة قاعدة البيانات v3
 conn = sqlite3.connect("chat_v3.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -38,7 +38,14 @@ def hash_password(password):
   return hashlib.sha256(password.encode()).hexdigest()
 
 
-st.set_page_config(page_title="Messenger Pro + Media", page_icon="💬", layout="wide")
+st.set_page_config(
+    page_title="Messenger Pro - Inbox", page_icon="💬", layout="wide"
+)
+
+# تنسيقات CSS للشارات الملونة والبطاقات
+st.markdown("""
+
+""", unsafe_allow_html=True)
 
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
@@ -112,11 +119,12 @@ else:
     )
     conn.commit()
 
+  # الشريط الجانبي للإعدادات والمعلومات السريعة
   with st.sidebar:
     st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
     st.caption(f"{st.session_state.get('bio', '')} | الحالة: {cur_status}")
 
-    with st.expander("⚙️ إعدادات الحساب والخصوصية"):
+    with st.expander("⚙️ إعدادات الحساب"):
       new_bio = st.text_input(
           "النبذة (Bio)", value=st.session_state.get("bio", "")
       )
@@ -153,41 +161,86 @@ else:
         st.success("تم تحديث الملف الشخصي!")
         st.rerun()
 
-      st.markdown("---")
-      st.write("🔑 **تغيير كلمة المرور**")
-      old_p = st.text_input("كلمة المرور الحالية", type="password")
-      new_p = st.text_input("كلمة المرور الجديدة", type="password")
-      if st.button("تحديث كلمة المرور"):
-        c.execute(
-            "SELECT password_hash FROM users WHERE username=?", (str(cur_user),)
-        )
-        row = c.fetchone()
-        if row and hash_password(old_p) == row[0]:
-          c.execute(
-              "UPDATE users SET password_hash=? WHERE username=?",
-              (hash_password(new_p), str(cur_user)),
-          )
-          conn.commit()
-          st.success("تم تغيير كلمة المرور بنجاح!")
-        else:
-          st.error("كلمة المرور الحالية غير صحيحة!")
-
     if st.button("تسجيل الخروج"):
       st.session_state["logged_in"] = False
       st.session_state["active_chat"] = None
       st.rerun()
 
-    st.markdown("---")
-    st.subheader("🔍 بحث عن أصدقاء")
-    search_query = st.text_input("ابحث باسم المستخدم...", "")
+  # الواجهة الرئيسية مقسمة لتبويبين: تبويب المحادثات (Inbox) وتبويب البحث/الأصدقاء
+  main_tab1, main_tab2 = st.tabs(["💬 صندوق المحادثات (Inbox)", "🔍 البحث والأصدقاء"])
 
-    st.subheader("👥 المحادثات")
+  with main_tab1:
+    st.subheader("📥 المحادثات النشطة")
+    # جلب جميع الأشخاص الذين حدث بينهم مراسلة مع المستخدم الحالي
+    c.execute(
+        """
+        SELECT DISTINCT CASE WHEN sender = ? THEN receiver ELSE sender END as peer
+        FROM messages 
+        WHERE sender = ? OR receiver = ?
+    """,
+        (cur_user, cur_user, cur_user),
+    )
+    peers = [row for row, in c.fetchall()]
+
+    if not peers:
+      st.info("لا توجد محادثات سابقة. ابدأ محادثة من تبويب 'البحث والأصدقاء'.")
+    else:
+      for peer in peers:
+        # جلب معلومات الصديق
+        c.execute(
+            "SELECT avatar, status, bio FROM users WHERE username=?", (peer,)
+        )
+        u_info = c.fetchone()
+        p_av = u_info if u_info else "💬"
+        p_status = u_info if u_info else "offline"
+
+        # حساب عدد الرسائل غير المقروءة الواردة من هذا الشخص
+        c.execute(
+            "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
+            " is_read=0",
+            (peer, cur_user),
+        )
+        unread_cnt = c.fetchone()
+
+        dot = (
+            "🟢"
+            if p_status == "online"
+            else ("🟠" if p_status == "busy" else "🔴")
+        )
+
+        col_a, col_b, col_c = st.columns()
+        col_a.markdown(f"### {p_av} {peer} {dot}")
+        if unread_cnt > 0:
+          col_b.markdown(
+              f'غير مقروء: {unread_cnt}',
+              unsafe_allow_html=True,
+          )
+        else:
+          col_b.markdown(
+              'مقروءة / لا جديد',
+              unsafe_allow_html=True,
+          )
+
+        if col_c.open_chat_btn if hasattr(col_c, "open_chat_btn") else True:
+          if col_c.button("فتح الدردشة", key=f"open_inbox_{peer}"):
+            st.session_state["active_chat"] = peer
+            c.execute(
+                "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
+                (peer, cur_user),
+            )
+            conn.commit()
+            st.rerun()
+
+        st.markdown("---")
+
+  with main_tab2:
+    st.subheader("🔍 البحث عن أصدقاء جدد أو مستخدمين")
+    search_query = st.text_input("ابحث باسم المستخدم...", "")
     c.execute(
         "SELECT username, avatar, status FROM users WHERE username != ?",
-        (str(cur_user),),
+        (cur_user,),
     )
     all_users = c.fetchall()
-
     filtered_users = [
         u
         for u in all_users
@@ -195,37 +248,27 @@ else:
     ]
 
     for friend_name, friend_avatar, friend_status in filtered_users:
-      c.execute(
-          "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
-          " is_read=0",
-          (str(friend_name), str(cur_user)),
-      )
-      unread_row = c.fetchone()
-      unread_count = unread_row if unread_row else 0
-
       dot_symbol = (
           "🟢"
           if friend_status == "online"
           else ("🟠" if friend_status == "busy" else "🔴")
       )
-      unread_str = (
-          f" [غير مقروء: {unread_count}]" if unread_count > 0 else ""
-      )
-
       if st.button(
-          f"{friend_avatar} {friend_name} {dot_symbol}{unread_str}",
-          key=f"chat_{friend_name}",
+          f"{friend_avatar} {friend_name} {dot_symbol}",
+          key=f"search_{friend_name}",
       ):
         st.session_state["active_chat"] = friend_name
         c.execute(
             "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
-            (str(friend_name), str(cur_user)),
+            (friend_name, cur_user),
         )
         conn.commit()
         st.rerun()
 
+  # عرض منطقة المحادثة النشطة (إن وُجدت)
   if st.session_state.get("active_chat"):
     target_friend = st.session_state["active_chat"]
+    st.markdown("---")
     c.execute(
         "SELECT avatar, status, bio FROM users WHERE username=?",
         (str(target_friend),),
@@ -242,11 +285,11 @@ else:
 
     col_t1, col_t2 = st.columns()
     with col_t1:
-      st.title(f"{f_av} {target_friend}")
+      st.title(f"💬 محادثة مع: {f_av} {target_friend}")
       st.caption(f"{f_bio} | الحالة: {dot_sym}")
     with col_t2:
       with st.expander("⚙️ إعدادات المحادثة"):
-        if st.button("🗑️ مسح المحادثة معي"):
+        if st.button("🗑️ مسح المحادثة معي", key="clear_chat_btn"):
           c.execute(
               """DELETE FROM messages WHERE 
                          (sender=? AND receiver=?) OR (sender=? AND receiver=?)""",
@@ -263,7 +306,7 @@ else:
 
     st.markdown("---")
 
-    # عرض الرسائل والوسائط
+    # جلب الرسائل
     c.execute(
         """
         SELECT id, sender, avatar, msg_type, content, ts, is_read FROM messages 
@@ -298,16 +341,19 @@ else:
         )
         st.caption(f"{time}{read_status}")
 
-    # صندوق الإرسال المتعدد (نص + رفع صور/صوت/فيديو)
+    # صندوق إرسال الرسائل والوسائط
     with st.container():
       c1, c2 = st.columns()
       with c1:
-        prompt = st.chat_input(f"اكتب رسالة إلى {target_friend}...")
+        prompt = st.chat_input(
+            f"اكتب رسالة إلى {target_friend}...", key="chat_input_box"
+        )
       with c2:
         media_file = st.file_uploader(
             "📁 إرسال وسائط",
             type=["png", "jpg", "jpeg", "mp4", "mp3", "wav"],
             label_visibility="collapsed",
+            key="media_uploader",
         )
 
       if prompt:
@@ -351,6 +397,3 @@ else:
         )
         conn.commit()
         st.rerun()
-  else:
-    st.title("💬 ماسنجر الأصدقاء")
-    st.info("👈 اختر صديقاً من القائمة الجانبية أو ابحث عنه لبدء محادثة خاصة.")
