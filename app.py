@@ -3,7 +3,7 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات بلطف دون حذف الجداول مع كل rerun
+# تهيئة قاعدة البيانات
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -16,10 +16,12 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
+# جدول الرسائل يدعم المرسل (sender) والمستقبل (receiver)
 c.execute("""
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user TEXT,
+    sender TEXT,
+    receiver TEXT,
     avatar TEXT,
     text TEXT,
     ts TEXT
@@ -32,12 +34,13 @@ def hash_password(password):
   return hashlib.sha256(password.encode()).hexdigest()
 
 
-st.set_page_config(page_title="Messenger Pro", page_icon="💬")
+st.set_page_config(page_title="Messenger Pro", page_icon="💬", layout="wide")
 
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
   st.session_state["username"] = ""
   st.session_state["avatar"] = "😀"
+  st.session_state["active_chat"] = None
 
 if not st.session_state["logged_in"]:
   st.title("🔐 تسجيل الدخول / حساب جديد")
@@ -79,43 +82,85 @@ if not st.session_state["logged_in"]:
               (r_user, p_hash, r_avatar),
           )
           conn.commit()
-          st.success("تم إنشاء الحساب بنجاح! انتقل لتبويب تسجيل الدخول وسجل.")
+          st.success("تم إنشاء الحساب بنجاح! انتقل لتبويب تسجيل الدخول.")
         except sqlite3.IntegrityError:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
+  # واجهة التطبيق الرئيسية (خاصة)
   with st.sidebar:
     st.write(f"الملف الشخصي: {st.session_state['avatar']}")
     st.subheader(f"مرحباً، {st.session_state['username']}")
     if st.button("تسجيل الخروج"):
       st.session_state["logged_in"] = False
+      st.session_state["active_chat"] = None
       st.rerun()
 
     st.markdown("---")
-    if st.button("🗑️ مسح سجل المحادثة"):
-      c.execute("DELETE FROM messages")
-      conn.commit()
-      st.rerun()
+    st.subheader("🔍 بحث عن أصدقاء")
+    search_query = st.text_input("ابحث باسم المستخدم...", "")
 
-  st.title("💬 ماسنجر الأصدقاء")
-
-  c.execute("SELECT id, user, avatar, text, ts FROM messages ORDER BY id ASC")
-  for msg_id, u, av, txt, time in c.fetchall():
-    is_me = u == st.session_state["username"]
-    with st.chat_message("user" if is_me else "assistant"):
-      st.markdown(f"{av} **{u}**: {txt}")
-      st.caption(time)
-
-  if prompt := st.chat_input("اكتب رسالتك واضغط Enter..."):
-    current_time = datetime.datetime.now().strftime("%H:%M")
+    st.subheader("👥 قائمة الأصدقاء")
+    # جلب جميع المستخدمين ماعدا الحساب الحالي
     c.execute(
-        "INSERT INTO messages (user, avatar, text, ts) VALUES (?, ?, ?, ?)",
+        "SELECT username, avatar FROM users WHERE username != ?",
+        (st.session_state["username"],),
+    )
+    all_users = c.fetchall()
+
+    # تصفية المستخدمين بناءً على خانة البحث
+    filtered_users = [
+        u
+        for u in all_users
+        if search_query.lower() in u[0].lower() or not search_query
+    ]
+
+    for friend_name, friend_avatar in filtered_users:
+      if st.button(f"{friend_avatar} {friend_name}", key=f"chat_{friend_name}"):
+        st.session_state["active_chat"] = friend_name
+        st.rerun()
+
+  # منطقة المحادثة الخاصة
+  if st.session_state["active_chat"]:
+    target_friend = st.session_state["active_chat"]
+    st.title(f"💬 محادثة مع: {target_friend}")
+
+    # جلب الرسائل الخاصة بين المستخدم الحالي والصديق المحدد
+    c.execute(
+        """
+        SELECT sender, avatar, text, ts FROM messages 
+        WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
+        ORDER BY id ASC
+    """,
         (
             st.session_state["username"],
-            st.session_state["avatar"],
-            prompt,
-            current_time,
+            target_friend,
+            target_friend,
+            st.session_state["username"],
         ),
     )
-    conn.commit()
-    st.rerun()
+
+    for sender_u, av, txt, time in c.fetchall():
+      is_me = sender_u == st.session_state["username"]
+      with st.chat_message("user" if is_me else "assistant"):
+        st.markdown(f"{av} **{sender_u}**: {txt}")
+        st.caption(time)
+
+    if prompt := st.chat_input(f"اكتب رسالة إلى {target_friend}..."):
+      current_time = datetime.datetime.now().strftime("%H:%M")
+      c.execute(
+          "INSERT INTO messages (sender, receiver, avatar, text, ts) VALUES"
+          " (?, ?, ?, ?, ?)",
+          (
+              st.session_state["username"],
+              target_friend,
+              st.session_state["avatar"],
+              prompt,
+              current_time,
+          ),
+      )
+      conn.commit()
+      st.rerun()
+  else:
+    st.title("💬 ماسنجر الأصدقاء")
+    st.info("👈 اختر صديقاً من القائمة الجانبية أو ابحث عنه لبدء محادثة خاصة.")
