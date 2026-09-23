@@ -3,7 +3,7 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات الآمنة لإضافة الأعمدة تدريجياً
+# تهيئة قاعدة البيانات الآمنة
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -78,9 +78,13 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res
-        st.session_state["bio"] = res or ""
-        st.session_state["status"] = res or "online"
+        st.session_state["avatar"] = res if len(res) > 0 else "😀"
+        st.session_state["bio"] = (
+            res if len(res) > 1 and res else "مرحباً!"
+        )
+        st.session_state["status"] = (
+            res if len(res) > 2 and res else "online"
+        )
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -98,9 +102,15 @@ if not st.session_state["logged_in"]:
         try:
           p_hash = hash_password(r_pass)
           c.execute(
-              "INSERT INTO users (username, password_hash, avatar) VALUES"
-              " (?,?, ?)",
-              (r_user, p_hash, r_avatar),
+              "INSERT INTO users (username, password_hash, avatar, bio,"
+              " status) VALUES (?,?,?,?,?)",
+              (
+                  r_user,
+                  p_hash,
+                  r_avatar,
+                  "مرحباً، أنا أستخدم ماسنجر الأصدقاء!",
+                  "online",
+              ),
           )
           conn.commit()
           st.success("تم إنشاء الحساب بنجاح! انتقل لتبويب تسجيل الدخول.")
@@ -108,12 +118,16 @@ if not st.session_state["logged_in"]:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
-  # مزامنة حالة المستخدم الحالي
-  c.execute(
-      "UPDATE users SET status=? WHERE username=?",
-      (st.session_state["status"], st.session_state["username"]),
-  )
-  conn.commit()
+  # مزامنة الحالة فقط إذا كان المستخدم مسجلاً بشكل صحيح
+  if st.session_state.get("username"):
+    c.execute(
+        "UPDATE users SET status=? WHERE username=?",
+        (
+            st.session_state.get("status", "online"),
+            st.session_state["username"],
+        ),
+    )
+    conn.commit()
 
   with st.sidebar:
     status_map = {
@@ -122,10 +136,10 @@ else:
         "offline": ("غير متصل 🔴", "offline-dot"),
     }
     curr_s, _ = status_map.get(
-        st.session_state["status"], ("نشط 🟢", "online-dot")
+        st.session_state.get("status", "online"), ("نشط 🟢", "online-dot")
     )
     st.write(
-        f"### {st.session_state['avatar']} {st.session_state['username']}"
+        f"### {st.session_state.get('avatar', '😀')} {st.session_state.get('username', '')}"
     )
     st.caption(f"{st.session_state.get('bio', '')} | {curr_s}")
 
@@ -133,21 +147,18 @@ else:
       new_bio = st.text_input(
           "النبذة (Bio)", value=st.session_state.get("bio", "")
       )
-      new_avatar = st.selectbox(
-          "تغيير الرمز",
-          ["😀", "😎", "🦊", "🤖", "🐱", "🚀"],
-          index=(
-              ["😀", "😎", "🦊", "🤖", "🐱", "🚀"].index(
-                  st.session_state["avatar"]
-              )
-              if st.session_state["avatar"]
-              in ["😀", "😎", "🦊", "🤖", "🐱", "🚀"]
-              else 0
-          ),
-      )
+      avatars = ["😀", "😎", "🦊", "🤖", "🐱", "🚀"]
+      cur_av = st.session_state.get("avatar", "😀")
+      idx = avatars.index(cur_av) if cur_av in avatars else 0
+      new_avatar = st.selectbox("تغيير الرمز", avatars, index=idx)
+
+      status_options = ["online", "busy", "offline"]
+      cur_st = st.session_state.get("status", "online")
+      st_idx = status_options.index(cur_st) if cur_st in status_options else 0
       new_status = st.selectbox(
           "تحديد الحالة",
-          ["online", "busy", "offline"],
+          status_options,
+          index=st_idx,
           format_func=lambda x: {
               "online": "نشط (Online)",
               "busy": "مشغول (Busy)",
@@ -157,7 +168,12 @@ else:
       if st.button("حفظ الملف الشخصي"):
         c.execute(
             "UPDATE users SET bio=?, avatar=?, status=? WHERE username=?",
-            (new_bio, new_avatar, new_status, st.session_state["username"]),
+            (
+                new_bio,
+                new_avatar,
+                new_status,
+                st.session_state["username"],
+            ),
         )
         conn.commit()
         st.session_state["bio"] = new_bio
@@ -175,8 +191,8 @@ else:
             "SELECT password_hash FROM users WHERE username=?",
             (st.session_state["username"],),
         )
-        stored_hash = c.fetchone()[0]
-        if hash_password(old_p) == stored_hash:
+        row = c.fetchone()
+        if row and hash_password(old_p) == row:
           c.execute(
               "UPDATE users SET password_hash=? WHERE username=?",
               (hash_password(new_p), st.session_state["username"]),
@@ -214,14 +230,17 @@ else:
           " is_read=0",
           (friend_name, st.session_state["username"]),
       )
-      unread_count = c.fetchone()[0]
+      unread_row = c.fetchone()
+      unread_count = unread_row if unread_row else 0
 
       dot_symbol = (
           "🟢"
           if friend_status == "online"
           else ("🟠" if friend_status == "busy" else "🔴")
       )
-      unread_str = f" [غير مقروء: {unread_count}]" if unread_count > 0 else ""
+      unread_str = (
+          f" [غير مقروء: {unread_count}]" if unread_count > 0 else ""
+      )
 
       if st.button(
           f"{friend_avatar} {friend_name} {dot_symbol}{unread_str}",
@@ -235,7 +254,7 @@ else:
         conn.commit()
         st.rerun()
 
-  if st.session_state["active_chat"]:
+  if st.session_state.get("active_chat"):
     target_friend = st.session_state["active_chat"]
     c.execute(
         "SELECT avatar, status, bio FROM users WHERE username=?",
@@ -302,8 +321,8 @@ else:
     if prompt := st.chat_input(f"اكتب رسالة إلى {target_friend}..."):
       current_time = datetime.datetime.now().strftime("%H:%M")
       c.execute(
-          "INSERT INTO messages (sender, receiver, avatar, text, ts, is_read)"
-          " VALUES (?, ?, ?, ?, ?, 0)",
+          "INSERT INTO messages (sender, receiver, avatar, text, ts,"
+          " is_read) VALUES (?, ?, ?, ?, ?, 0)",
           (
               st.session_state["username"],
               target_friend,
