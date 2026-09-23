@@ -4,10 +4,11 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات v7
-conn = sqlite3.connect("chat_v7.db", check_same_thread=False)
+# تثبيت قاعدة بيانات موحدة وثابتة لضمان عدم ضياع الحسابات والرسائل
+conn = sqlite3.connect("chat_v3.db", check_same_thread=False)
 c = conn.cursor()
 
+# إنشاء الجداول الأساسية إن لم تكن موجودة
 c.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18,6 +19,16 @@ CREATE TABLE IF NOT EXISTS users (
     status TEXT
 )
 """)
+
+# إضافة أي أعمدة ناقصة بأمان دون المسح أو التغيير المدمر
+existing_user_cols = [col[1] for col in c.execute("PRAGMA table_info(users)").fetchall()]
+if "bio" not in existing_user_cols:
+  c.execute(
+      "ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر"
+      " الأصدقاء!'"
+  )
+if "status" not in existing_user_cols:
+  c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'online'")
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS messages (
@@ -31,6 +42,15 @@ CREATE TABLE IF NOT EXISTS messages (
     is_read INTEGER DEFAULT 0
 )
 """)
+
+existing_msg_cols = [
+    col[1] for col in c.execute("PRAGMA table_info(messages)").fetchall()
+]
+if "msg_type" not in existing_msg_cols:
+  c.execute("ALTER TABLE messages ADD COLUMN msg_type TEXT DEFAULT 'text'")
+if "is_read" not in existing_msg_cols:
+  c.execute("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0")
+
 conn.commit()
 
 
@@ -72,9 +92,9 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res[0] if (res and len(res) > 0 and res[0]) else "😀"
-        st.session_state["bio"] = res if (res and len(res) > 1 and res) else "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
-        st.session_state["status"] = res if (res and len(res) > 2 and res) else "online"
+        st.session_state["avatar"] = res[0] or "😀"
+        st.session_state["bio"] = res or "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
+        st.session_state["status"] = res or "online"
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -106,7 +126,6 @@ if not st.session_state["logged_in"]:
           st.success("تم إنشاء الحساب بنجاح! انتقل لتبويب تسجيل الدخول.")
         except sqlite3.IntegrityError:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
-
 else:
   cur_user = st.session_state.get("username", "")
   cur_status = st.session_state.get("status", "online")
@@ -120,7 +139,10 @@ else:
 
   with st.sidebar:
     st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
-    st.caption(f"{st.session_state.get('bio', 'لا توجد نبذة')} | الحالة: {cur_status}")
+    st.caption(
+        f"{st.session_state.get('bio', 'لا توجد نبذة')} | الحالة:"
+        f" {cur_status}"
+    )
 
     with st.expander("⚙️ إعدادات الحساب"):
       new_bio = st.text_input(
@@ -132,7 +154,7 @@ else:
       new_avatar = st.selectbox("تغيير الرمز", avatars, index=idx)
 
       status_options = ["online", "busy", "offline"]
-      cur_st = st.session_state.get("status", "online")
+      cur_st = cur_status
       st_idx = (
           status_options.index(cur_st)
           if cur_st in status_options
@@ -190,10 +212,10 @@ else:
         p_av = u_info[0] if (u_info and len(u_info) > 0) else "💬"
         p_status = u_info if (u_info and len(u_info) > 1) else "offline"
 
-        c.execute(
-            "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND is_read=0",
-            (peer, cur_user),
-        )
+        xmin_query = """
+            SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND is_read=0
+        """
+        c.execute(xmin_query, (peer, cur_user))
         unread_row = c.fetchone()
         unread_cnt = unread_row[0] if unread_row else 0
 
@@ -203,7 +225,7 @@ else:
             else ("🟠" if p_status == "busy" else "🔴")
         )
 
-        col_a, col_b, col_c = st.columns()
+        col_a, col_b, col_c = st.columns(3)
         col_a.markdown(f"### {p_av} {peer} {dot}")
         if unread_cnt > 0:
           col_b.markdown(
@@ -235,7 +257,6 @@ else:
         (cur_user,),
     )
     all_users = c.fetchall()
-    # التصحيح هنا: u[0] هو اسم المستخدم
     filtered_users = [
         u
         for u in all_users
@@ -280,7 +301,7 @@ else:
         else ("🟠 مشغول" if f_status == "busy" else "🔴 غير متصل")
     )
 
-    col_t1, col_t2 = st.columns()
+    col_t1, col_t2 = st.columns(2)
     with col_t1:
       st.title(f"💬 محادثة مع: {f_av} {target_friend}")
       st.caption(f"{f_bio} | الحالة: {dot_sym}")
@@ -338,7 +359,7 @@ else:
         st.caption(f"{time}{read_status}")
 
     with st.container():
-      c1, c2 = st.columns()
+      c1, c2 = st.columns(2)
       with c1:
         prompt = st.chat_input(
             f"اكتب رسالة إلى {target_friend}...", key="chat_input_box"
@@ -354,7 +375,8 @@ else:
       if prompt:
         current_time = datetime.datetime.now().strftime("%H:%M")
         c.execute(
-            "INSERT INTO messages (sender, receiver, avatar, msg_type, content, ts, is_read) VALUES (?, ?, ?, 'text', ?, ?, 0)",
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
+            " ts, is_read) VALUES (?, ?, ?, 'text', ?, ?, 0)",
             (
                 str(cur_user),
                 str(target_friend),
@@ -378,7 +400,8 @@ else:
 
         current_time = datetime.datetime.now().strftime("%H:%M")
         c.execute(
-            "INSERT INTO messages (sender, receiver, avatar, msg_type, content, ts, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
+            " ts, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
             (
                 str(cur_user),
                 str(target_friend),
