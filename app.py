@@ -4,8 +4,8 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات v6
-conn = sqlite3.connect("chat_v6.db", check_same_thread=False)
+# تهيئة قاعدة البيانات v7
+conn = sqlite3.connect("chat_v7.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -72,13 +72,9 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res[0] if len(res) > 0 else "😀"
-        st.session_state["bio"] = (
-            res if len(res) > 1 and res else "مرحباً!"
-        )
-        st.session_state["status"] = (
-            res if len(res) > 2 and res else "online"
-        )
+        st.session_state["avatar"] = res[0] if (res and len(res) > 0 and res[0]) else "😀"
+        st.session_state["bio"] = res if (res and len(res) > 1 and res) else "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
+        st.session_state["status"] = res if (res and len(res) > 2 and res) else "online"
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -124,10 +120,7 @@ else:
 
   with st.sidebar:
     st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
-    st.caption(
-        f"{st.session_state.get('bio', 'لا توجد نبذة')} | الحالة:"
-        f" {cur_status}"
-    )
+    st.caption(f"{st.session_state.get('bio', 'لا توجد نبذة')} | الحالة: {cur_status}")
 
     with st.expander("⚙️ إعدادات الحساب"):
       new_bio = st.text_input(
@@ -139,9 +132,10 @@ else:
       new_avatar = st.selectbox("تغيير الرمز", avatars, index=idx)
 
       status_options = ["online", "busy", "offline"]
+      cur_st = st.session_state.get("status", "online")
       st_idx = (
-          status_options.index(cur_status)
-          if cur_status in status_options
+          status_options.index(cur_st)
+          if cur_st in status_options
           else 0
       )
       new_status = st.selectbox(
@@ -197,8 +191,7 @@ else:
         p_status = u_info if (u_info and len(u_info) > 1) else "offline"
 
         c.execute(
-            "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
-            " is_read=0",
+            "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND is_read=0",
             (peer, cur_user),
         )
         unread_row = c.fetchone()
@@ -242,13 +235,17 @@ else:
         (cur_user,),
     )
     all_users = c.fetchall()
+    # التصحيح هنا: u[0] هو اسم المستخدم
     filtered_users = [
         u
         for u in all_users
-        if search_query.lower() in u.lower() or not search_query
+        if search_query.lower() in u[0].lower() or not search_query
     ]
 
-    for friend_name, friend_avatar, friend_status in filtered_users:
+    if not filtered_users:
+      st.caption("لا توجد تطابقات للبحث.")
+    for u in filtered_users:
+      friend_name, friend_avatar, friend_status = u
       dot_symbol = (
           "🟢"
           if friend_status == "online"
@@ -357,8 +354,7 @@ else:
       if prompt:
         current_time = datetime.datetime.now().strftime("%H:%M")
         c.execute(
-            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
-            " ts, is_read) VALUES (?, ?, ?, 'text', ?, ?, 0)",
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content, ts, is_read) VALUES (?, ?, ?, 'text', ?, ?, 0)",
             (
                 str(cur_user),
                 str(target_friend),
@@ -382,8 +378,7 @@ else:
 
         current_time = datetime.datetime.now().strftime("%H:%M")
         c.execute(
-            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
-            " ts, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content, ts, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
             (
                 str(cur_user),
                 str(target_friend),
