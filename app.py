@@ -3,16 +3,12 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات مع إعادة هيكلة نظيفة لتجنب التعارض
+# تهيئة قاعدة البيانات بلطف دون حذف الجداول مع كل rerun
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
-# تنظيف الجداول القديمة لتوافق الهيكل الجديد
-c.execute("DROP TABLE IF EXISTS messages")
-c.execute("DROP TABLE IF EXISTS users")
-
 c.execute("""
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
     password_hash TEXT,
@@ -21,7 +17,7 @@ CREATE TABLE users (
 """)
 
 c.execute("""
-CREATE TABLE messages (
+CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user TEXT,
     avatar TEXT,
@@ -72,17 +68,20 @@ if not st.session_state["logged_in"]:
         "اختر رمزك الشخصي (Avatar)", ["😀", "😎", "🦊", "🤖", "🐱", "🚀"]
     )
     if st.button("إنشاء الحساب"):
-      try:
-        p_hash = hash_password(r_pass)
-        c.execute(
-            "INSERT INTO users (username, password_hash, avatar) VALUES (?,?,"
-            " ?)",
-            (r_user, p_hash, r_avatar),
-        )
-        conn.commit()
-        st.success("تم إنشاء الحساب! انتقل لتبويب تسجيل الدخول.")
-      except sqlite3.IntegrityError:
-        st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
+      if not r_user or not r_pass:
+        st.warning("يرجى ملء اسم المستخدم وكلمة المرور")
+      else:
+        try:
+          p_hash = hash_password(r_pass)
+          c.execute(
+              "INSERT INTO users (username, password_hash, avatar) VALUES (?,?,"
+              " ?)",
+              (r_user, p_hash, r_avatar),
+          )
+          conn.commit()
+          st.success("تم إنشاء الحساب بنجاح! انتقل لتبويب تسجيل الدخول وسجل.")
+        except sqlite3.IntegrityError:
+          st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
   with st.sidebar:
