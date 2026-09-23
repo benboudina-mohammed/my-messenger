@@ -3,7 +3,7 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات الآمنة
+# تهيئة قاعدة البيانات
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -13,20 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE,
     password_hash TEXT,
     avatar TEXT,
-    bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!',
-    status TEXT DEFAULT 'online'
+    bio TEXT,
+    status TEXT
 )
 """)
-
-for col, def_val in [
-    ("bio", "'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'"),
-    ("status", "'online'"),
-]:
-  try:
-    c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {def_val}")
-    conn.commit()
-  except sqlite3.OperationalError:
-    pass
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS messages (
@@ -48,15 +38,11 @@ def hash_password(password):
 
 st.set_page_config(page_title="Messenger Pro", page_icon="💬", layout="wide")
 
-st.markdown("""
-
-""", unsafe_allow_html=True)
-
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
   st.session_state["username"] = ""
   st.session_state["avatar"] = "😀"
-  st.session_state["bio"] = ""
+  st.session_state["bio"] = "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
   st.session_state["status"] = "online"
   st.session_state["active_chat"] = None
 
@@ -114,21 +100,21 @@ if not st.session_state["logged_in"]:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
-  current_user = st.session_state.get("username", "")
-  current_status = st.session_state.get("status", "online")
+  cur_user = st.session_state.get("username", "")
+  cur_status = st.session_state.get("status", "online")
 
-  if current_user:
+  if cur_user:
     c.execute(
         "UPDATE users SET status=? WHERE username=?",
-        (current_status, current_user),
+        (str(cur_status), str(cur_user)),
     )
     conn.commit()
 
   with st.sidebar:
     st.write(
-        f"### {st.session_state.get('avatar', '😀')} {current_user}"
+        f"### {st.session_state.get('avatar', '😀')} {cur_user}"
     )
-    st.caption(f"{st.session_state.get('bio', '')} | الحالة: {current_status}")
+    st.caption(f"{st.session_state.get('bio', '')} | الحالة: {cur_status}")
 
     with st.expander("⚙️ إعدادات الحساب والخصوصية"):
       new_bio = st.text_input(
@@ -140,10 +126,9 @@ else:
       new_avatar = st.selectbox("تغيير الرمز", avatars, index=idx)
 
       status_options = ["online", "busy", "offline"]
-      cur_st = current_status
       st_idx = (
-          status_options.index(cur_st)
-          if cur_st in status_options
+          status_options.index(cur_status)
+          if cur_status in status_options
           else 0
       )
       new_status = st.selectbox(
@@ -159,7 +144,7 @@ else:
       if st.button("حفظ الملف الشخصي"):
         c.execute(
             "UPDATE users SET bio=?, avatar=?, status=? WHERE username=?",
-            (new_bio, new_avatar, new_status, current_user),
+            (str(new_bio), str(new_avatar), str(new_status), str(cur_user)),
         )
         conn.commit()
         st.session_state["bio"] = new_bio
@@ -174,14 +159,13 @@ else:
       new_p = st.text_input("كلمة المرور الجديدة", type="password")
       if st.button("تحديث كلمة المرور"):
         c.execute(
-            "SELECT password_hash FROM users WHERE username=?",
-            (current_user,),
+            "SELECT password_hash FROM users WHERE username=?", (str(cur_user),)
         )
         row = c.fetchone()
         if row and hash_password(old_p) == row[0]:
           c.execute(
               "UPDATE users SET password_hash=? WHERE username=?",
-              (hash_password(new_p), current_user),
+              (hash_password(new_p), str(cur_user)),
           )
           conn.commit()
           st.success("تم تغيير كلمة المرور بنجاح!")
@@ -200,24 +184,24 @@ else:
     st.subheader("👥 المحادثات")
     c.execute(
         "SELECT username, avatar, status FROM users WHERE username != ?",
-        (current_user,),
+        (str(cur_user),),
     )
     all_users = c.fetchall()
 
     filtered_users = [
         u
         for u in all_users
-        if search_query.lower() in u[0].lower() or not search_query
+        if search_query.lower() in u.lower() or not search_query
     ]
 
     for friend_name, friend_avatar, friend_status in filtered_users:
       c.execute(
           "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
           " is_read=0",
-          (friend_name, current_user),
+          (str(friend_name), str(cur_user)),
       )
       unread_row = c.fetchone()
-      unread_count = unread_row[0] if unread_row else 0
+      unread_count = unread_row if unread_row else 0
 
       dot_symbol = (
           "🟢"
@@ -235,7 +219,7 @@ else:
         st.session_state["active_chat"] = friend_name
         c.execute(
             "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
-            (friend_name, current_user),
+            (str(friend_name), str(cur_user)),
         )
         conn.commit()
         st.rerun()
@@ -244,7 +228,7 @@ else:
     target_friend = st.session_state["active_chat"]
     c.execute(
         "SELECT avatar, status, bio FROM users WHERE username=?",
-        (target_friend,),
+        (str(target_friend),),
     )
     f_info = c.fetchone()
     f_av, f_status, f_bio = (
@@ -267,10 +251,10 @@ else:
               """DELETE FROM messages WHERE 
                          (sender=? AND receiver=?) OR (sender=? AND receiver=?)""",
               (
-                  current_user,
-                  target_friend,
-                  target_friend,
-                  current_user,
+                  str(cur_user),
+                  str(target_friend),
+                  str(target_friend),
+                  str(cur_user),
               ),
           )
           conn.commit()
@@ -286,15 +270,15 @@ else:
         ORDER BY id ASC
     """,
         (
-            current_user,
-            target_friend,
-            target_friend,
-            current_user,
+            str(cur_user),
+            str(target_friend),
+            str(target_friend),
+            str(cur_user),
         ),
     )
 
     for msg_id, sender_u, av, txt, time, is_read in c.fetchall():
-      is_me = sender_u == current_user
+      is_me = sender_u == cur_user
       with st.chat_message("user" if is_me else "assistant"):
         st.markdown(f"{av} **{sender_u}**: {txt}")
         read_status = (
@@ -310,11 +294,11 @@ else:
           "INSERT INTO messages (sender, receiver, avatar, text, ts,"
           " is_read) VALUES (?, ?, ?, ?, ?, 0)",
           (
-              current_user,
-              target_friend,
-              st.session_state["avatar"],
-              prompt,
-              current_time,
+              str(cur_user),
+              str(target_friend),
+              str(st.session_state.get("avatar", "😀")),
+              str(prompt),
+              str(current_time),
           ),
       )
       conn.commit()
