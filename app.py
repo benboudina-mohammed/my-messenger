@@ -4,8 +4,8 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات v3
-conn = sqlite3.connect("chat_v3.db", check_same_thread=False)
+# تهيئة قاعدة البيانات بنسخة نظيفة v4 لتلافي أي أخطاء ترسبات سابقة
+conn = sqlite3.connect("chat_v4.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -42,7 +42,6 @@ st.set_page_config(
     page_title="Messenger Pro - Inbox", page_icon="💬", layout="wide"
 )
 
-# تنسيقات CSS للشارات الملونة والبطاقات
 st.markdown("""
 
 """, unsafe_allow_html=True)
@@ -73,7 +72,7 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res[0] or "😀"
+        st.session_state["avatar"] = res or "😀"
         st.session_state["bio"] = res or "مرحباً!"
         st.session_state["status"] = res or "online"
         st.rerun()
@@ -119,7 +118,6 @@ else:
     )
     conn.commit()
 
-  # الشريط الجانبي للإعدادات والمعلومات السريعة
   with st.sidebar:
     st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
     st.caption(f"{st.session_state.get('bio', '')} | الحالة: {cur_status}")
@@ -166,12 +164,10 @@ else:
       st.session_state["active_chat"] = None
       st.rerun()
 
-  # الواجهة الرئيسية مقسمة لتبويبين: تبويب المحادثات (Inbox) وتبويب البحث/الأصدقاء
   main_tab1, main_tab2 = st.tabs(["💬 صندوق المحادثات (Inbox)", "🔍 البحث والأصدقاء"])
 
   with main_tab1:
     st.subheader("📥 المحادثات النشطة")
-    # جلب جميع الأشخاص الذين حدث بينهم مراسلة مع المستخدم الحالي
     c.execute(
         """
         SELECT DISTINCT CASE WHEN sender = ? THEN receiver ELSE sender END as peer
@@ -186,21 +182,20 @@ else:
       st.info("لا توجد محادثات سابقة. ابدأ محادثة من تبويب 'البحث والأصدقاء'.")
     else:
       for peer in peers:
-        # جلب معلومات الصديق
         c.execute(
             "SELECT avatar, status, bio FROM users WHERE username=?", (peer,)
         )
         u_info = c.fetchone()
-        p_av = u_info if u_info else "💬"
+        p_av = u_info[0] if u_info else "💬"
         p_status = u_info if u_info else "offline"
 
-        # حساب عدد الرسائل غير المقروءة الواردة من هذا الشخص
         c.execute(
             "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
             " is_read=0",
             (peer, cur_user),
         )
-        unread_cnt = c.fetchone()
+        unread_row = c.fetchone()
+        unread_cnt = unread_row if unread_row else 0
 
         dot = (
             "🟢"
@@ -221,15 +216,14 @@ else:
               unsafe_allow_html=True,
           )
 
-        if col_c.open_chat_btn if hasattr(col_c, "open_chat_btn") else True:
-          if col_c.button("فتح الدردشة", key=f"open_inbox_{peer}"):
-            st.session_state["active_chat"] = peer
-            c.execute(
-                "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
-                (peer, cur_user),
-            )
-            conn.commit()
-            st.rerun()
+        if col_c.button("فتح الدردشة", key=f"open_inbox_{peer}"):
+          st.session_state["active_chat"] = peer
+          c.execute(
+              "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
+              (peer, cur_user),
+          )
+          conn.commit()
+          st.rerun()
 
         st.markdown("---")
 
@@ -265,7 +259,6 @@ else:
         conn.commit()
         st.rerun()
 
-  # عرض منطقة المحادثة النشطة (إن وُجدت)
   if st.session_state.get("active_chat"):
     target_friend = st.session_state["active_chat"]
     st.markdown("---")
@@ -274,9 +267,9 @@ else:
         (str(target_friend),),
     )
     f_info = c.fetchone()
-    f_av, f_status, f_bio = (
-        f_info if f_info else ("💬", "online", "لا توجد نبذة")
-    )
+    f_av = f_info[0] if f_info else "💬"
+    f_status = f_info if f_info else "online"
+    f_bio = f_info if f_info else "لا توجد نبذة"
     dot_sym = (
         "🟢 نشط الآن"
         if f_status == "online"
@@ -306,7 +299,6 @@ else:
 
     st.markdown("---")
 
-    # جلب الرسائل
     c.execute(
         """
         SELECT id, sender, avatar, msg_type, content, ts, is_read FROM messages 
@@ -341,7 +333,6 @@ else:
         )
         st.caption(f"{time}{read_status}")
 
-    # صندوق إرسال الرسائل والوسائط
     with st.container():
       c1, c2 = st.columns()
       with c1:
