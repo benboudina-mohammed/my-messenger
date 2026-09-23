@@ -12,11 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
     password_hash TEXT,
-    avatar TEXT
+    avatar TEXT,
+    bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'
 )
 """)
 
-# جدول الرسائل يدعم المرسل (sender) والمستقبل (receiver)
 c.execute("""
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS messages (
     receiver TEXT,
     avatar TEXT,
     text TEXT,
-    ts TEXT
+    ts TEXT,
+    is_read INTEGER DEFAULT 0
 )
 """)
 conn.commit()
@@ -36,10 +37,16 @@ def hash_password(password):
 
 st.set_page_config(page_title="Messenger Pro", page_icon="💬", layout="wide")
 
+# تخصيص CSS للـ Badges والنقاط الخضراء/الزرقاء
+st.markdown("""
+
+""", unsafe_allow_html=True)
+
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
   st.session_state["username"] = ""
   st.session_state["avatar"] = "😀"
+  st.session_state["bio"] = ""
   st.session_state["active_chat"] = None
 
 if not st.session_state["logged_in"]:
@@ -52,7 +59,7 @@ if not st.session_state["logged_in"]:
     if st.button("دخول"):
       p_hash = hash_password(l_pass)
       c.execute(
-          "SELECT avatar FROM users WHERE username=? AND password_hash=?",
+          "SELECT avatar, bio FROM users WHERE username=? AND password_hash=?",
           (l_user, p_hash),
       )
       res = c.fetchone()
@@ -60,6 +67,7 @@ if not st.session_state["logged_in"]:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
         st.session_state["avatar"] = res[0]
+        st.session_state["bio"] = res or ""
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -87,10 +95,23 @@ if not st.session_state["logged_in"]:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
-  # واجهة التطبيق الرئيسية (خاصة)
+  # الشريط الجانبي
   with st.sidebar:
-    st.write(f"الملف الشخصي: {st.session_state['avatar']}")
-    st.subheader(f"مرحباً، {st.session_state['username']}")
+    st.write(f"### {st.session_state['avatar']} {st.session_state['username']}")
+    st.caption(st.session_state.get("bio", ""))
+
+    # قسم الإعدادات الشخصية
+    with st.expander("⚙️ إعدادات الحساب"):
+      new_bio = st.text_input("الحالة / البايو", value=st.session_state.get("bio", ""))
+      new_avatar = st.selectbox("تغيير الرمز", ["😀", "😎", "🦊", "🤖", "🐱", "🚀"], index=["😀", "😎", "🦊", "🤖", "🐱", "🚀"].index(st.session_state['avatar']) if st.session_state['avatar'] in ["😀", "😎", "🦊", "🤖", "🐱", "🚀"] else 0)
+      if st.button("حفظ التعديلات"):
+        c.execute("UPDATE users SET bio=?, avatar=? WHERE username=?", (new_bio, new_avatar, st.session_state["username"]))
+        conn.commit()
+        st.session_state["bio"] = new_bio
+        st.session_state["avatar"] = new_avatar
+        st.success("تم الحفظ!")
+        st.rerun()
+
     if st.button("تسجيل الخروج"):
       st.session_state["logged_in"] = False
       st.session_state["active_chat"] = None
@@ -100,15 +121,13 @@ else:
     st.subheader("🔍 بحث عن أصدقاء")
     search_query = st.text_input("ابحث باسم المستخدم...", "")
 
-    st.subheader("👥 قائمة الأصدقاء")
-    # جلب جميع المستخدمين ماعدا الحساب الحالي
+    st.subheader("👥 المحادثات")
     c.execute(
         "SELECT username, avatar FROM users WHERE username != ?",
         (st.session_state["username"],),
     )
     all_users = c.fetchall()
 
-    # تصفية المستخدمين بناءً على خانة البحث
     filtered_users = [
         u
         for u in all_users
@@ -116,19 +135,35 @@ else:
     ]
 
     for friend_name, friend_avatar in filtered_users:
-      if st.button(f"{friend_avatar} {friend_name}", key=f"chat_{friend_name}"):
+      # حساب الرسائل غير المقروءة الواردة من هذا الصديق
+      c.execute(
+          "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND is_read=0",
+          (friend_name, st.session_state["username"]),
+      )
+      unread_count = c.fetchone()[0]
+
+      badge_html = f"{unread_count}" if unread_count > 0 else ""
+      btn_label = f"{friend_avatar} {friend_name} 🟢 {badge_html}"
+      
+      # زر اختيار المحادثة
+      if st.button(f"{friend_avatar} {friend_name} (غير مقروء: {unread_count})" if unread_count > 0 else f"{friend_avatar} {friend_name} 🟢", key=f"chat_{friend_name}"):
         st.session_state["active_chat"] = friend_name
+        # تحديد الرسائل كمقروءة عند فتح المحادثة
+        c.execute(
+            "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
+            (friend_name, st.session_state["username"]),
+        )
+        conn.commit()
         st.rerun()
 
   # منطقة المحادثة الخاصة
   if st.session_state["active_chat"]:
     target_friend = st.session_state["active_chat"]
-    st.title(f"💬 محادثة مع: {target_friend}")
+    st.title(f"💬 {target_friend} 🟢")
 
-    # جلب الرسائل الخاصة بين المستخدم الحالي والصديق المحدد
     c.execute(
         """
-        SELECT sender, avatar, text, ts FROM messages 
+        SELECT id, sender, avatar, text, ts, is_read FROM messages 
         WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
         ORDER BY id ASC
     """,
@@ -140,17 +175,17 @@ else:
         ),
     )
 
-    for sender_u, av, txt, time in c.fetchall():
+    for msg_id, sender_u, av, txt, time, is_read in c.fetchall():
       is_me = sender_u == st.session_state["username"]
       with st.chat_message("user" if is_me else "assistant"):
         st.markdown(f"{av} **{sender_u}**: {txt}")
-        st.caption(time)
+        read_status = " ✓✓ مقروءة" if (is_me and is_read == 1) else (" ✓ أُرسلت" if is_me else "")
+        st.caption(f"{time}{read_status}")
 
     if prompt := st.chat_input(f"اكتب رسالة إلى {target_friend}..."):
       current_time = datetime.datetime.now().strftime("%H:%M")
       c.execute(
-          "INSERT INTO messages (sender, receiver, avatar, text, ts) VALUES"
-          " (?, ?, ?, ?, ?)",
+          "INSERT INTO messages (sender, receiver, avatar, text, ts, is_read) VALUES (?, ?, ?, ?, ?, 0)",
           (
               st.session_state["username"],
               target_friend,
