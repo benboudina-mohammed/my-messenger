@@ -3,12 +3,16 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات
+# تهيئة قاعدة البيانات مع إعادة هيكلة نظيفة لتجنب التعارض
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
+# تنظيف الجداول القديمة لتوافق الهيكل الجديد
+c.execute("DROP TABLE IF EXISTS messages")
+c.execute("DROP TABLE IF EXISTS users")
+
 c.execute("""
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
     password_hash TEXT,
@@ -17,7 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user TEXT,
     avatar TEXT,
@@ -34,7 +38,6 @@ def hash_password(password):
 
 st.set_page_config(page_title="Messenger Pro", page_icon="💬")
 
-# إدارة حالة الجلسة (Session State) لتسجيل الدخول
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
   st.session_state["username"] = ""
@@ -79,10 +82,9 @@ if not st.session_state["logged_in"]:
         conn.commit()
         st.success("تم إنشاء الحساب! انتقل لتبويب تسجيل الدخول.")
       except sqlite3.IntegrityError:
-        st.error("اسم المستخدمموجود مسبقاً، اختر غيره.")
+        st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
-  # واجهة التطبيق بعد تسجيل الدخول
   with st.sidebar:
     st.write(f"الملف الشخصي: {st.session_state['avatar']}")
     st.subheader(f"مرحباً، {st.session_state['username']}")
@@ -98,7 +100,6 @@ else:
 
   st.title("💬 ماسنجر الأصدقاء")
 
-  # عرض الرسائل
   c.execute("SELECT id, user, avatar, text, ts FROM messages ORDER BY id ASC")
   for msg_id, u, av, txt, time in c.fetchall():
     is_me = u == st.session_state["username"]
