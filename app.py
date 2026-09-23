@@ -1,10 +1,11 @@
+import base64
 import datetime
 import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات
-conn = sqlite3.connect("chat.db", check_same_thread=False)
+# تهيئة قاعدة البيانات بنسخة نظيفة v3 لتجنب التعارضات القديمة
+conn = sqlite3.connect("chat_v3.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -24,7 +25,8 @@ CREATE TABLE IF NOT EXISTS messages (
     sender TEXT,
     receiver TEXT,
     avatar TEXT,
-    text TEXT,
+    msg_type TEXT DEFAULT 'text',
+    content TEXT,
     ts TEXT,
     is_read INTEGER DEFAULT 0
 )
@@ -36,7 +38,7 @@ def hash_password(password):
   return hashlib.sha256(password.encode()).hexdigest()
 
 
-st.set_page_config(page_title="Messenger Pro", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Messenger Pro + Media", page_icon="💬", layout="wide")
 
 if "logged_in" not in st.session_state:
   st.session_state["logged_in"] = False
@@ -111,9 +113,7 @@ else:
     conn.commit()
 
   with st.sidebar:
-    st.write(
-        f"### {st.session_state.get('avatar', '😀')} {cur_user}"
-    )
+    st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
     st.caption(f"{st.session_state.get('bio', '')} | الحالة: {cur_status}")
 
     with st.expander("⚙️ إعدادات الحساب والخصوصية"):
@@ -263,9 +263,10 @@ else:
 
     st.markdown("---")
 
+    # عرض الرسائل والوسائط
     c.execute(
         """
-        SELECT id, sender, avatar, text, ts, is_read FROM messages 
+        SELECT id, sender, avatar, msg_type, content, ts, is_read FROM messages 
         WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
         ORDER BY id ASC
     """,
@@ -277,10 +278,19 @@ else:
         ),
     )
 
-    for msg_id, sender_u, av, txt, time, is_read in c.fetchall():
+    for msg_id, sender_u, av, m_type, content, time, is_read in c.fetchall():
       is_me = sender_u == cur_user
       with st.chat_message("user" if is_me else "assistant"):
-        st.markdown(f"{av} **{sender_u}**: {txt}")
+        st.markdown(f"{av} **{sender_u}**:")
+        if m_type == "text":
+          st.write(content)
+        elif m_type == "image":
+          st.image(base64.b64decode(content), width=300)
+        elif m_type == "audio":
+          st.audio(base64.b64decode(content))
+        elif m_type == "video":
+          st.video(base64.b64decode(content))
+
         read_status = (
             " ✓✓ مقروءة"
             if (is_me and is_read == 1)
@@ -288,21 +298,59 @@ else:
         )
         st.caption(f"{time}{read_status}")
 
-    if prompt := st.chat_input(f"اكتب رسالة إلى {target_friend}..."):
-      current_time = datetime.datetime.now().strftime("%H:%M")
-      c.execute(
-          "INSERT INTO messages (sender, receiver, avatar, text, ts,"
-          " is_read) VALUES (?, ?, ?, ?, ?, 0)",
-          (
-              str(cur_user),
-              str(target_friend),
-              str(st.session_state.get("avatar", "😀")),
-              str(prompt),
-              str(current_time),
-          ),
-      )
-      conn.commit()
-      st.rerun()
+    # صندوق الإرسال المتعدد (نص + رفع صور/صوت/فيديو)
+    with st.container():
+      c1, c2 = st.columns()
+      with c1:
+        prompt = st.chat_input(f"اكتب رسالة إلى {target_friend}...")
+      with c2:
+        media_file = st.file_uploader(
+            "📁 إرسال وسائط",
+            type=["png", "jpg", "jpeg", "mp4", "mp3", "wav"],
+            label_visibility="collapsed",
+        )
+
+      if prompt:
+        current_time = datetime.datetime.now().strftime("%H:%M")
+        c.execute(
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
+            " ts, is_read) VALUES (?, ?, ?, 'text', ?, ?, 0)",
+            (
+                str(cur_user),
+                str(target_friend),
+                str(st.session_state.get("avatar", "😀")),
+                str(prompt),
+                str(current_time),
+            ),
+        )
+        conn.commit()
+        st.rerun()
+
+      if media_file is not None:
+        file_bytes = media_file.read()
+        b64_content = base64.b64encode(file_bytes).decode("utf-8")
+        ext = media_file.name.split(".")[-1].lower()
+        m_type = (
+            "image"
+            if ext in ["png", "jpg", "jpeg"]
+            else ("video" if ext == "mp4" else "audio")
+        )
+
+        current_time = datetime.datetime.now().strftime("%H:%M")
+        c.execute(
+            "INSERT INTO messages (sender, receiver, avatar, msg_type, content,"
+            " ts, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (
+                str(cur_user),
+                str(target_friend),
+                str(st.session_state.get("avatar", "😀")),
+                m_type,
+                b64_content,
+                str(current_time),
+            ),
+        )
+        conn.commit()
+        st.rerun()
   else:
     st.title("💬 ماسنجر الأصدقاء")
     st.info("👈 اختر صديقاً من القائمة الجانبية أو ابحث عنه لبدء محادثة خاصة.")
