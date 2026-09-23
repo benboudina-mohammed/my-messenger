@@ -4,8 +4,8 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات بنسخة نظيفة v5
-conn = sqlite3.connect("chat_v5.db", check_same_thread=False)
+# تهيئة قاعدة البيانات v6
+conn = sqlite3.connect("chat_v6.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -72,9 +72,13 @@ if not st.session_state["logged_in"]:
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res[0] or "😀"
-        st.session_state["bio"] = res or "مرحباً!"
-        st.session_state["status"] = res or "online"
+        st.session_state["avatar"] = res[0] if len(res) > 0 else "😀"
+        st.session_state["bio"] = (
+            res if len(res) > 1 and res else "مرحباً!"
+        )
+        st.session_state["status"] = (
+            res if len(res) > 2 and res else "online"
+        )
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -120,7 +124,10 @@ else:
 
   with st.sidebar:
     st.write(f"### {st.session_state.get('avatar', '😀')} {cur_user}")
-    st.caption(f"{st.session_state.get('bio', '')} | الحالة: {cur_status}")
+    st.caption(
+        f"{st.session_state.get('bio', 'لا توجد نبذة')} | الحالة:"
+        f" {cur_status}"
+    )
 
     with st.expander("⚙️ إعدادات الحساب"):
       new_bio = st.text_input(
@@ -186,8 +193,8 @@ else:
             "SELECT avatar, status, bio FROM users WHERE username=?", (peer,)
         )
         u_info = c.fetchone()
-        p_av = u_info[0] if u_info else "💬"
-        p_status = u_info if u_info else "offline"
+        p_av = u_info[0] if (u_info and len(u_info) > 0) else "💬"
+        p_status = u_info if (u_info and len(u_info) > 1) else "offline"
 
         c.execute(
             "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
@@ -238,7 +245,7 @@ else:
     filtered_users = [
         u
         for u in all_users
-        if search_query.lower() in u[0].lower() or not search_query
+        if search_query.lower() in u.lower() or not search_query
     ]
 
     for friend_name, friend_avatar, friend_status in filtered_users:
@@ -267,9 +274,9 @@ else:
         (str(target_friend),),
     )
     f_info = c.fetchone()
-    f_av = f_info[0] if f_info else "💬"
-    f_status = f_info if f_info else "online"
-    f_bio = f_info if f_info else "لا توجد نبذة"
+    f_av = f_info[0] if (f_info and len(f_info) > 0) else "💬"
+    f_status = f_info if (f_info and len(f_info) > 1) else "online"
+    f_bio = f_info if (f_info and len(f_info) > 2) else "لا توجد نبذة"
     dot_sym = (
         "🟢 نشط الآن"
         if f_status == "online"
