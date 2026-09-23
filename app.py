@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 
 # إضافة أي أعمدة ناقصة بأمان دون المسح أو التغيير المدمر
-existing_user_cols = [col for col, in c.execute("PRAGMA table_info(users)").fetchall()]
+c.execute("PRAGMA table_info(users)")
+existing_user_cols = [col[1] for col in c.fetchall()]
 if "bio" not in existing_user_cols:
     c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'")
 if "status" not in existing_user_cols:
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS messages (
 )
 """)
 
-existing_msg_cols = [col for col, in c.execute("PRAGMA table_info(messages)").fetchall()]
+c.execute("PRAGMA table_info(messages)")
+existing_msg_cols = [col[1] for col in c.fetchall()]
 if "msg_type" not in existing_msg_cols:
     c.execute("ALTER TABLE messages ADD COLUMN msg_type TEXT DEFAULT 'text'")
 if "is_read" not in existing_msg_cols:
@@ -86,8 +88,8 @@ if not st.session_state["logged_in"]:
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = l_user
                 st.session_state["avatar"] = res[0] or "😀"
-                st.session_state["bio"] = res if (res and len(res) > 1 and res) else "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
-                st.session_state["status"] = res if (res and len(res) > 2 and res) else "online"
+                st.session_state["bio"] = res if (len(res) > 1 and res) else "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
+                st.session_state["status"] = res if (len(res) > 2 and res) else "online"
                 st.rerun()
             else:
                 st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
