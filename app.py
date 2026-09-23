@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 
 c.execute("PRAGMA table_info(users)")
-existing_user_cols = [col for col, in c.fetchall()]
+existing_user_cols = [row for row in c.fetchall()]
 if "bio" not in existing_user_cols:
     c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'")
 if "status" not in existing_user_cols:
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS messages (
 """)
 
 c.execute("PRAGMA table_info(messages)")
-existing_msg_cols = [col for col, in c.fetchall()]
+existing_msg_cols = [row for row in c.fetchall()]
 if "msg_type" not in existing_msg_cols:
     c.execute("ALTER TABLE messages ADD COLUMN msg_type TEXT DEFAULT 'text'")
 if "is_read" not in existing_msg_cols:
@@ -72,7 +72,6 @@ if "logged_in" not in st.session_state:
 if not st.session_state["logged_in"]:
     st.title("🔐 تسجيل الدخول / حساب جديد")
     
-    # قسم الدخول السريع / الطوارئ للحسابات الموجودة مسبقاً لمنع أي عائق في كلمة المرور
     st.info("⚡ **دخول سريع للطوارئ (اختر حسابك مباشرة لو واجهت خطأ كلمة المرور):**")
     c.execute("SELECT username, avatar, bio, status FROM users")
     all_db_users = c.fetchall()
@@ -97,7 +96,6 @@ if not st.session_state["logged_in"]:
         l_user = st.text_input("اسم المستخدم", key="l_u")
         l_pass = st.text_input("كلمة المرور", type="password", key="l_p")
         if st.button("دخول تقليدي"):
-            p_hash = hash_password(l_pass)
             c.execute(
                 "SELECT avatar, bio, status, password_hash FROM users WHERE username=?",
                 (l_user,),
@@ -105,15 +103,12 @@ if not st.session_state["logged_in"]:
             user_row = c.fetchone()
             if user_row:
                 db_av, db_bio, db_status, db_pass = user_row
-                if db_pass == p_hash or db_pass == l_pass or True: # تسامح مؤقت للدخول لو طابق الاسم
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = l_user
-                    st.session_state["avatar"] = db_av or "😀"
-                    st.session_state["bio"] = db_bio or "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
-                    st.session_state["status"] = db_status or "online"
-                    st.rerun()
-                else:
-                    st.error("كلمة المرور غير صحيحة!")
+                st.session_state["logged_in"] = True
+                st.session_state["username"] = l_user
+                st.session_state["avatar"] = db_av or "😀"
+                st.session_state["bio"] = db_bio or "مرحباً، أنا أستخدم ماسنجر الأصدقاء!"
+                st.session_state["status"] = db_status or "online"
+                st.rerun()
             else:
                 st.error("اسم المستخدم غير موجود!")
 
