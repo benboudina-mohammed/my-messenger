@@ -3,7 +3,7 @@ import hashlib
 import sqlite3
 import streamlit as st
 
-# تهيئة قاعدة البيانات
+# تهيئة قاعدة البيانات الآمنة لإضافة الأعمدة تدريجياً
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -13,19 +13,20 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE,
     password_hash TEXT,
     avatar TEXT,
-    bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'
+    bio TEXT DEFAULT 'مرحباً، أنا أستخدم ماسنجر الأصدقاء!',
+    status TEXT DEFAULT 'online'
 )
 """)
 
-# إضافة عمود bio بأمان إذا لم يكن موجوداً في الجدول القديم
-try:
-  c.execute(
-      "ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'مرحباً، أنا أستخدم"
-      " ماسنجر الأصدقاء!'"
-  )
-  conn.commit()
-except sqlite3.OperationalError:
-  pass  # العمود موجود مسبقاً
+for col, def_val in [
+    ("bio", "'مرحباً، أنا أستخدم ماسنجر الأصدقاء!'"),
+    ("status", "'online'"),
+]:
+  try:
+    c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {def_val}")
+    conn.commit()
+  except sqlite3.OperationalError:
+    pass
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS messages (
@@ -56,6 +57,7 @@ if "logged_in" not in st.session_state:
   st.session_state["username"] = ""
   st.session_state["avatar"] = "😀"
   st.session_state["bio"] = ""
+  st.session_state["status"] = "online"
   st.session_state["active_chat"] = None
 
 if not st.session_state["logged_in"]:
@@ -68,15 +70,17 @@ if not st.session_state["logged_in"]:
     if st.button("دخول"):
       p_hash = hash_password(l_pass)
       c.execute(
-          "SELECT avatar, bio FROM users WHERE username=? AND password_hash=?",
+          "SELECT avatar, bio, status FROM users WHERE username=? AND"
+          " password_hash=?",
           (l_user, p_hash),
       )
       res = c.fetchone()
       if res:
         st.session_state["logged_in"] = True
         st.session_state["username"] = l_user
-        st.session_state["avatar"] = res[0]
+        st.session_state["avatar"] = res
         st.session_state["bio"] = res or ""
+        st.session_state["status"] = res or "online"
         st.rerun()
       else:
         st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -94,8 +98,8 @@ if not st.session_state["logged_in"]:
         try:
           p_hash = hash_password(r_pass)
           c.execute(
-              "INSERT INTO users (username, password_hash, avatar) VALUES (?,?,"
-              " ?)",
+              "INSERT INTO users (username, password_hash, avatar) VALUES"
+              " (?,?, ?)",
               (r_user, p_hash, r_avatar),
           )
           conn.commit()
@@ -104,13 +108,30 @@ if not st.session_state["logged_in"]:
           st.error("اسم المستخدم موجود مسبقاً، اختر غيره.")
 
 else:
-  with st.sidebar:
-    st.write(f"### {st.session_state['avatar']} {st.session_state['username']}")
-    st.caption(st.session_state.get("bio", ""))
+  # مزامنة حالة المستخدم الحالي
+  c.execute(
+      "UPDATE users SET status=? WHERE username=?",
+      (st.session_state["status"], st.session_state["username"]),
+  )
+  conn.commit()
 
-    with st.expander("⚙️ إعدادات الحساب"):
+  with st.sidebar:
+    status_map = {
+        "online": ("نشط 🟢", "online-dot"),
+        "busy": ("مشغول 🟠", "busy-dot"),
+        "offline": ("غير متصل 🔴", "offline-dot"),
+    }
+    curr_s, _ = status_map.get(
+        st.session_state["status"], ("نشط 🟢", "online-dot")
+    )
+    st.write(
+        f"### {st.session_state['avatar']} {st.session_state['username']}"
+    )
+    st.caption(f"{st.session_state.get('bio', '')} | {curr_s}")
+
+    with st.expander("⚙️ إعدادات الحساب والخصوصية"):
       new_bio = st.text_input(
-          "الحالة / البايو", value=st.session_state.get("bio", "")
+          "النبذة (Bio)", value=st.session_state.get("bio", "")
       )
       new_avatar = st.selectbox(
           "تغيير الرمز",
@@ -124,16 +145,46 @@ else:
               else 0
           ),
       )
-      if st.button("حفظ التعديلات"):
+      new_status = st.selectbox(
+          "تحديد الحالة",
+          ["online", "busy", "offline"],
+          format_func=lambda x: {
+              "online": "نشط (Online)",
+              "busy": "مشغول (Busy)",
+              "offline": "غير متصل (Offline)",
+          }[x],
+      )
+      if st.button("حفظ الملف الشخصي"):
         c.execute(
-            "UPDATE users SET bio=?, avatar=? WHERE username=?",
-            (new_bio, new_avatar, st.session_state["username"]),
+            "UPDATE users SET bio=?, avatar=?, status=? WHERE username=?",
+            (new_bio, new_avatar, new_status, st.session_state["username"]),
         )
         conn.commit()
         st.session_state["bio"] = new_bio
         st.session_state["avatar"] = new_avatar
-        st.success("تم الحفظ!")
+        st.session_state["status"] = new_status
+        st.success("تم تحديث الملف الشخصي!")
         st.rerun()
+
+      st.markdown("---")
+      st.write("🔑 **تغيير كلمة المرور**")
+      old_p = st.text_input("كلمة المرور الحالية", type="password")
+      new_p = st.text_input("كلمة المرور الجديدة", type="password")
+      if st.button("تحديث كلمة المرور"):
+        c.execute(
+            "SELECT password_hash FROM users WHERE username=?",
+            (st.session_state["username"],),
+        )
+        stored_hash = c.fetchone()[0]
+        if hash_password(old_p) == stored_hash:
+          c.execute(
+              "UPDATE users SET password_hash=? WHERE username=?",
+              (hash_password(new_p), st.session_state["username"]),
+          )
+          conn.commit()
+          st.success("تم تغيير كلمة المرور بنجاح!")
+        else:
+          st.error("كلمة المرور الحالية غير صحيحة!")
 
     if st.button("تسجيل الخروج"):
       st.session_state["logged_in"] = False
@@ -146,7 +197,7 @@ else:
 
     st.subheader("👥 المحادثات")
     c.execute(
-        "SELECT username, avatar FROM users WHERE username != ?",
+        "SELECT username, avatar, status FROM users WHERE username != ?",
         (st.session_state["username"],),
     )
     all_users = c.fetchall()
@@ -157,7 +208,7 @@ else:
         if search_query.lower() in u[0].lower() or not search_query
     ]
 
-    for friend_name, friend_avatar in filtered_users:
+    for friend_name, friend_avatar, friend_status in filtered_users:
       c.execute(
           "SELECT COUNT(*) FROM messages WHERE sender=? AND receiver=? AND"
           " is_read=0",
@@ -165,12 +216,17 @@ else:
       )
       unread_count = c.fetchone()[0]
 
-      btn_label = (
-          f"{friend_avatar} {friend_name} (غير مقروء: {unread_count})"
-          if unread_count > 0
-          else f"{friend_avatar} {friend_name} 🟢"
+      dot_symbol = (
+          "🟢"
+          if friend_status == "online"
+          else ("🟠" if friend_status == "busy" else "🔴")
       )
-      if st.button(btn_label, key=f"chat_{friend_name}"):
+      unread_str = f" [غير مقروء: {unread_count}]" if unread_count > 0 else ""
+
+      if st.button(
+          f"{friend_avatar} {friend_name} {dot_symbol}{unread_str}",
+          key=f"chat_{friend_name}",
+      ):
         st.session_state["active_chat"] = friend_name
         c.execute(
             "UPDATE messages SET is_read=1 WHERE sender=? AND receiver=?",
@@ -181,7 +237,42 @@ else:
 
   if st.session_state["active_chat"]:
     target_friend = st.session_state["active_chat"]
-    st.title(f"💬 {target_friend} 🟢")
+    c.execute(
+        "SELECT avatar, status, bio FROM users WHERE username=?",
+        (target_friend,),
+    )
+    f_info = c.fetchone()
+    f_av, f_status, f_bio = (
+        f_info if f_info else ("💬", "online", "لا توجد نبذة")
+    )
+    dot_sym = (
+        "🟢 نشط الآن"
+        if f_status == "online"
+        else ("🟠 مشغول" if f_status == "busy" else "🔴 غير متصل")
+    )
+
+    col_t1, col_t2 = st.columns()
+    with col_t1:
+      st.title(f"{f_av} {target_friend}")
+      st.caption(f"{f_bio} | الحالة: {dot_sym}")
+    with col_t2:
+      with st.expander("⚙️ إعدادات المحادثة"):
+        if st.button("🗑️ مسح المحادثة معي"):
+          c.execute(
+              """DELETE FROM messages WHERE 
+                         (sender=? AND receiver=?) OR (sender=? AND receiver=?)""",
+              (
+                  st.session_state["username"],
+                  target_friend,
+                  target_friend,
+                  st.session_state["username"],
+              ),
+          )
+          conn.commit()
+          st.success("تم مسح المحادثة!")
+          st.rerun()
+
+    st.markdown("---")
 
     c.execute(
         """
